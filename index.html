@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ES添削補助ツール</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --line:#262b36;
+    --text:#e7eaf0; --muted:#9aa4b2; --accent:#4f8cff;
+    --ok:#3ecf8e; --warn:#ffb020; --bad:#ff5c5c;
+    --radius:12px;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; font-family:"Segoe UI","Hiragino Kaku Gothic ProN","Yu Gothic UI",sans-serif;
+    background:var(--bg); color:var(--text); line-height:1.6;
+  }
+  header{padding:24px 20px 8px; max-width:1100px; margin:0 auto}
+  header h1{margin:0; font-size:22px}
+  header p{margin:4px 0 0; color:var(--muted); font-size:14px}
+  main{max-width:1100px; margin:0 auto; padding:16px 20px 60px;
+    display:grid; grid-template-columns:1fr 340px; gap:20px}
+  @media(max-width:820px){main{grid-template-columns:1fr}}
+  .panel{background:var(--panel); border:1px solid var(--line);
+    border-radius:var(--radius); padding:16px}
+  label{font-size:13px; color:var(--muted); display:block; margin-bottom:6px}
+  textarea{width:100%; min-height:340px; resize:vertical; background:#0c0e12;
+    color:var(--text); border:1px solid var(--line); border-radius:10px;
+    padding:12px; font-size:15px; line-height:1.8; font-family:inherit}
+  textarea:focus{outline:none; border-color:var(--accent)}
+  .row{display:flex; align-items:center; gap:10px; margin-top:12px; flex-wrap:wrap}
+  .row input[type=number]{width:90px; background:#0c0e12; color:var(--text);
+    border:1px solid var(--line); border-radius:8px; padding:6px 8px}
+  .stat{display:flex; justify-content:space-between; align-items:baseline;
+    padding:8px 0; border-bottom:1px solid var(--line)}
+  .stat:last-child{border-bottom:none}
+  .stat .num{font-size:20px; font-weight:700}
+  .stat .num.small{font-size:15px; font-weight:600}
+  .badge{font-size:12px; padding:2px 8px; border-radius:999px; font-weight:600}
+  .badge.ok{background:rgba(62,207,142,.15); color:var(--ok)}
+  .badge.warn{background:rgba(255,176,32,.15); color:var(--warn)}
+  .badge.bad{background:rgba(255,92,92,.15); color:var(--bad)}
+  h2{font-size:15px; margin:0 0 10px}
+  .findings{list-style:none; padding:0; margin:0}
+  .findings li{padding:8px 10px; border-radius:8px; margin-bottom:8px;
+    font-size:13px; background:#0c0e12; border-left:3px solid var(--line)}
+  .findings li.warn{border-left-color:var(--warn)}
+  .findings li.bad{border-left-color:var(--bad)}
+  .findings li.ok{border-left-color:var(--ok); color:var(--muted)}
+  .findings .tag{font-weight:700; margin-right:6px}
+  .foot{color:var(--muted); font-size:12px; margin-top:14px}
+  mark{background:rgba(255,176,32,.28); color:inherit; border-radius:3px}
+</style>
+</head>
+<body>
+<header>
+  <h1>ES添削補助ツール</h1>
+  <p>エントリーシートを貼り付けると、文字数・構造・弱い表現を自動チェックします。データは端末内で処理され、外部送信されません。</p>
+</header>
+<main>
+  <section class="panel">
+    <label for="input">ES本文</label>
+    <textarea id="input" placeholder="ここにESを貼り付けてください（例：学生時代に力を入れたこと…）"></textarea>
+    <div class="row">
+      <label style="margin:0">目標文字数</label>
+      <input type="number" id="target" value="400" min="0" step="50">
+      <span class="badge" id="targetBadge">—</span>
+    </div>
+  </section>
+
+  <aside>
+    <div class="panel" style="margin-bottom:20px">
+      <h2>文字数</h2>
+      <div class="stat"><span>文字数（空白・改行除く）</span><span class="num" id="chars">0</span></div>
+      <div class="stat"><span>空白・改行含む総数</span><span class="num small" id="charsAll">0</span></div>
+      <div class="stat"><span>段落数</span><span class="num small" id="paras">0</span></div>
+      <div class="stat"><span>文の数</span><span class="num small" id="sentences">0</span></div>
+      <div class="stat"><span>一文の平均文字数</span><span class="num small" id="avgLen">0</span></div>
+    </div>
+    <div class="panel">
+      <h2>チェック結果</h2>
+      <ul class="findings" id="findings"><li class="ok">本文を入力すると診断が表示されます。</li></ul>
+      <div class="foot">※ あくまで補助です。最終判断はご自身で。</div>
+    </div>
+  </aside>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const input = $('input');
+
+// 弱い/注意したい表現の辞書
+const WEAK = [
+  {re:/思います|思う|考えます/g, tag:'弱い語尾', msg:'「思います」系が多いと自信のなさに見えます。断定 or 事実で締めましょう。', level:'warn', limit:2},
+  {re:/頑張(り|っ|る)|一生懸命|努力し/g, tag:'抽象語', msg:'「頑張った/努力した」は抽象的。具体的な行動と数字に置き換えを。', level:'warn', limit:1},
+  {re:/様々な|いろいろな|色々な|たくさんの/g, tag:'ぼかし語', msg:'「様々な」は中身が伝わりません。具体例を1つ挙げましょう。', level:'warn', limit:1},
+  {re:/コミュニケーション能力|リーダーシップ/g, tag:'ありがち語', msg:'定番ワードは行動で示すと説得力が増します。', level:'warn', limit:0},
+  {re:/と思われる|かもしれません|だと思う/g, tag:'曖昧', msg:'曖昧表現は自信を弱めます。', level:'warn', limit:0},
+];
+
+function analyze(){
+  const raw = input.value;
+  const target = parseInt($('target').value) || 0;
+
+  const noSpace = raw.replace(/\s/g,'');
+  $('chars').textContent = noSpace.length;
+  $('charsAll').textContent = raw.length;
+
+  // 目標文字数バッジ
+  const badge = $('targetBadge');
+  if(!raw.trim() || !target){ badge.textContent='—'; badge.className='badge'; }
+  else{
+    const ratio = noSpace.length/target;
+    if(ratio < 0.8){ badge.textContent=`あと${target-noSpace.length}字（${Math.round(ratio*100)}%）`; badge.className='badge warn'; }
+    else if(ratio <= 1.0){ badge.textContent=`${Math.round(ratio*100)}% 良い範囲`; badge.className='badge ok'; }
+    else{ badge.textContent=`${noSpace.length-target}字オーバー`; badge.className='badge bad'; }
+  }
+
+  // 段落・文
+  const paras = raw.split(/\n\s*\n/).map(s=>s.trim()).filter(Boolean);
+  $('paras').textContent = paras.length;
+  const sentences = raw.split(/[。！？!?]/).map(s=>s.trim()).filter(Boolean);
+  $('sentences').textContent = sentences.length;
+  const avg = sentences.length ? Math.round(noSpace.length/sentences.length) : 0;
+  $('avgLen').textContent = avg;
+
+  // チェック生成
+  const out = [];
+  if(!raw.trim()){
+    $('findings').innerHTML = '<li class="ok">本文を入力すると診断が表示されます。</li>';
+    return;
+  }
+
+  // 長すぎる一文
+  const longOnes = sentences.filter(s=>s.length>60);
+  if(longOnes.length){
+    out.push({level:'bad', tag:'長文', msg:`60字を超える一文が${longOnes.length}箇所あります。読みにくいので分割を検討。（例：「${longOnes[0].slice(0,24)}…」）`});
+  }
+
+  // 段落チェック
+  if(paras.length<=1 && noSpace.length>200){
+    out.push({level:'warn', tag:'段落', msg:'改行のない一塊です。「結論→具体→学び」で段落を分けると読みやすくなります。'});
+  }
+
+  // 弱い表現
+  for(const w of WEAK){
+    const m = raw.match(w.re);
+    if(m && m.length>w.limit){
+      out.push({level:w.level, tag:w.tag, msg:`「${[...new Set(m)].join('・')}」を${m.length}回使用。${w.msg}`});
+    }
+  }
+
+  // 結論ファースト簡易判定
+  const first = paras[0]||'';
+  if(first && !/^(私は|結論|一番|最も|強み|学生時代)/.test(first) && first.length>40){
+    out.push({level:'warn', tag:'書き出し', msg:'冒頭で結論・テーマが明示されていないかも。1文目で「何の話か」を宣言すると読み手が楽です。'});
+  }
+
+  if(!out.length){
+    out.push({level:'ok', tag:'OK', msg:'大きな問題は見つかりませんでした。あとは具体エピソードと数字を厚くできると◎。'});
+  }
+
+  $('findings').innerHTML = out.map(o=>
+    `<li class="${o.level}"><span class="tag">${o.tag}</span>${o.msg}</li>`).join('');
+}
+
+input.addEventListener('input', analyze);
+$('target').addEventListener('input', analyze);
+analyze();
+</script>
+</body>
+</html>
