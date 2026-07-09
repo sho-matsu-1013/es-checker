@@ -2,7 +2,7 @@
 
 エントリーシート（ES）を貼り付けるだけで、文字数・文章構造・弱い表現を自動チェックするWebツールです。
 
-**▶ デモ: https://＜あとでGitHub PagesのURLに差し替え＞**
+**▶ デモ: https://sho-matsu-1013.github.io/es-checker/**
 
 ## 機能
 
